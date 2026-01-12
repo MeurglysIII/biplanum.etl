@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: biplanum.etl
-Version: 0.0.2
+Version: 0.0.1
 Summary: Набор полезных функций для etl
 Author-email: Daniil Kirichenko <dkirichenko@biplanum.ru>
 License-Expression: MIT
