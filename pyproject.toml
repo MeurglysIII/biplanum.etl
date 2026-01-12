@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biplanum.etl"
+version = "0.0.1"
+authors = [
+  { name="Daniil Kirichenko", email="dkirichenko@biplanum.ru" },
+]
+description = "Набор полезных функций для etl"
+readme = "README.md"
+requires-python = ">=3.5"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true
