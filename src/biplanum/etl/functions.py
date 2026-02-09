@@ -36,7 +36,7 @@ def CellExportPy (cube: Cube, area: Dict[str,List[str]] = None, use_rules=True, 
         for i, dim in enumerate(cube_dims):
             dimName = dim.Info().ndimension
             if dimName in area:
-                if area[dimName] is str: # если только один элемент в области
+                if isinstance(area[dimName], str): # если только один элемент в области
                     area_int.append([dim.Element(elementName=area[dimName]).Info().element])
                 else:                    # если несколько элементов в области
                     area_int.append([dim.Element(elementName=element_str).Info().element for element_str in area[dimName]])
@@ -145,7 +145,7 @@ def clearCubePy(cube: Cube, area: Dict[str,List[str]] = None, silent=False):
         for i, dim in enumerate(cube_dims):
             dimName = dim.Info().ndimension
             if dimName in area:
-                if area[dimName] is str: # если только один элемент в области
+                if isinstance(area[dimName], str): # если только один элемент в области
                     area_int.append([dim.Element(elementName=area[dimName]).Info().element])
                 else:                    # если несколько элементов в области
                     area_int.append([dim.Element(elementName=element_str).Info().element for element_str in area[dimName]])
