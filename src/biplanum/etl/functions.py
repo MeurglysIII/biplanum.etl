@@ -22,7 +22,7 @@ class LogWrite:
                 self.LOG.Info(line)
 
 # Загрузка среза из куба
-def CellExportPy (cube: Cube, area: Dict[str,List[str]] = None, use_rules=True, base_only=True, skip_empty=True, 
+def CellExportPy (cube: Cube, area = None, use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False):
     cubeName = cube.CurrentInfo.name_cube
     cube_dims = cube.CubeDimensions()
@@ -80,7 +80,7 @@ def CellExportPy (cube: Cube, area: Dict[str,List[str]] = None, use_rules=True, 
     return df
 
 # Выгрузка данных из куба для списка областей
-def CellExportPy_areaList (cube: Cube, areas: List[Dict[str,List[str]]] = None, use_rules=True, base_only=True, skip_empty=True, 
+def CellExportPy_areaList (cube: Cube, areas, use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False):
     cubeName = cube.CurrentInfo.name_cube
     if not silent:
@@ -132,7 +132,7 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
     print(f" Загрузка в куб '{cubeName}' завершена ".center(outputWidth, fillSymbol))
 
 # Очистка среза
-def clearCubePy(cube: Cube, area: Dict[str,List[str]] = None, silent=False):
+def clearCubePy(cube: Cube, area = None, silent=False):
     cube_dims = cube.CubeDimensions()
     cubeName = cube.CurrentInfo.name_cube
     
@@ -157,7 +157,7 @@ def clearCubePy(cube: Cube, area: Dict[str,List[str]] = None, silent=False):
         print(f" Срез куба '{cubeName}' очищен ".center(outputWidth, fillSymbol))
 
 # Очистка среза для списка областей
-def clearCubePy_areaList(cube: Cube, areas: List[Dict[str,List[str]]] = None, silent=False):
+def clearCubePy_areaList(cube: Cube, areas, silent=False):
     cubeName = cube.CurrentInfo.name_cube
     
     #Очистка
