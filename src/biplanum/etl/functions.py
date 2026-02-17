@@ -23,7 +23,11 @@ class LogWrite:
 
 # Загрузка среза из куба
 def CellExportPy (cube: Cube, area = None, use_rules=True, base_only=True, skip_empty=True, 
-                  show_rule=True, verbose=True, silent=False):
+                  show_rule=True, verbose=True, silent=False) -> pd.DataFrame:
+    """
+    :param area: словарь вида {dimName: elementName} или {dimName: [elementName1, elementName2,...]} для указания среза.
+    """
+
     cubeName = cube.CurrentInfo.name_cube
     cube_dims = cube.CubeDimensions()
     
@@ -82,6 +86,9 @@ def CellExportPy (cube: Cube, area = None, use_rules=True, base_only=True, skip_
 # Выгрузка данных из куба для списка областей
 def CellExportPy_areaList (cube: Cube, areas, use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False):
+    """
+    :param areas: список словарей вида {dimName: elementName} или {dimName: [elementName1, elementName2,...]} для указания среза.
+    """
     cubeName = cube.CurrentInfo.name_cube
     if not silent:
         print(f"Начало загрузки данных из куба {cubeName}".center(outputWidth, fillSymbol))
@@ -133,6 +140,9 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
 
 # Очистка среза
 def clearCubePy(cube: Cube, area = None, silent=False):
+    """
+    :param area: словарь вида {dimName: elementName} или {dimName: [elementName1, elementName2,...]} для указания среза.
+    """
     cube_dims = cube.CubeDimensions()
     cubeName = cube.CurrentInfo.name_cube
     
@@ -158,6 +168,9 @@ def clearCubePy(cube: Cube, area = None, silent=False):
 
 # Очистка среза для списка областей
 def clearCubePy_areaList(cube: Cube, areas, silent=False):
+    """
+    :param areas: список словарей вида {dimName: elementName} или {dimName: [elementName1, elementName2,...]} для указания среза.
+    """
     cubeName = cube.CurrentInfo.name_cube
     
     #Очистка
