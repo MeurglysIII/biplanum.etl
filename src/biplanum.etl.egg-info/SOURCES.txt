@@ -7,3 +7,6 @@ src/biplanum.etl.egg-info/dependency_links.txt
 src/biplanum.etl.egg-info/top_level.txt
 src/biplanum/etl/__init__.py
 src/biplanum/etl/functions.py
+src/biplanum/etl/Planum/Applications/__init__.pyi
+src/biplanum/etl/Planum/DAL/__init__.pyi
+src/biplanum/etl/Planum/DAL/Model/__init__.pyi

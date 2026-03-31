@@ -1,31 +1,70 @@
+"""
+ETL утилиты для работы с кубами Planum OLAP и DataFrame pandas.
+Модуль предоставляет набор функций для извлечения, трансформации и загрузки данных
+из/в кубы Planum OLAP. 
+Включает утилиты для:
+- Экспорта данных куба в DataFrame pandas
+- Загрузки DataFrame обратно в кубы
+- Очистки данных куба с по области
+- Валидации и трансформации данных
+- Логирования и отладки
+
+Классы:
+    LogWrite: Перенаправляет вывод print в логгер Planum.
+
+Функции:
+    CellExportPy: Экспорт данных куба в виде DataFrame.
+    CellExportPy_areaList: Экспорт данных из нескольких областей куба.
+    loadDataframeInCube: Загрузка значений DataFrame в куб.
+    clearCubePy: Очистка полного куба или определённой области.
+    clearCubePy_areaList: Очистка нескольких областей куба.
+    removeRowsWithNonexistElem: Фильтрация строк DataFrame с несуществующими элементами измерения.
+    pivotDataframe: Трансформация DataFrame для преобразования показателей в колонки.
+    printDataframe: Красивый вывод содержимого DataFrame в лог.
+
+Константы модуля:
+    outputWidth: Ширина форматированного вывода в консоль (по умолчанию: 120).
+    fillSymbol: Символ для форматирования границ вывода (по умолчанию: '#').
+
+Зависимости:
+- pandas
+- numpy
+- Planum.DAL (Database, Cube)
+"""
 import pandas as pd
 from typing import List, Dict
-from Planum.DAL import Database, Server, IOlapConnection, Dimension, Cube
-from Planum.DAL.Model import ElementType, CellType
-import time, sys
+from Planum.DAL import Database, Cube
+from Planum.DAL.Model import CellType
 import numpy as np
-from Planum.Process import ProjectContextLogger
-
 
 outputWidth = 120
 fillSymbol = '#'
 
 class LogWrite:
+    """
+    Класс для перенаправления вывода print в лог Planum. Обычный print работает неправильно.     
+    """
     def __init__(self, LOG):
         self.LOG = LOG
     def getvalue(self):
         return None
     def write(self, string):
-        getvalue = self
         if string != '\n':
             for line in string.split('\n'):
                 self.LOG.Info(line)
 
-# Загрузка среза из куба
-def CellExportPy (cube: Cube, area = None, use_rules=True, base_only=True, skip_empty=True, 
+def CellExportPy (cube: Cube, area: Dict[str,List[str] | str] = None, use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False) -> pd.DataFrame:
     """
+    Загрузка данных из куба с помощью метода CellExport. Позволяет выгрузить срез куба в виде dataframe с измерениями в столбцах и значениями в столбце Value.
+
     :param area: словарь вида {dimName: elementName} или {dimName: [elementName1, elementName2,...]} для указания среза.
+    :param use_rules: грузить ячейки, к которым применяются правила
+    :param base_only: грузить только базовые элементы
+    :param skip_empty: пропускать пустые ячейки
+    :param show_rule: непонятно, что делает. Используйте use_rules
+    :param verbose: выводить ли информацию о размере и столбцах полученного dataframe
+    :param silent: отключить все выводы, включая информацию о размере и столбцах полученного dataframe. Параметр полезен при загрузке нескольких областей, чтобы не засорять лог повторяющейся информацией. 
     """
 
     cubeName = cube.CurrentInfo.name_cube
@@ -60,19 +99,10 @@ def CellExportPy (cube: Cube, area = None, use_rules=True, base_only=True, skip_
     dimNames = [dim.Info().ndimension for dim in cube_dims]
     elNames = [{el.element: el.element_name for el in dim.ElementInfos()} for dim in cube_dims]
     data_dict = []
-    for cellArea in cellAreas:
-        area_dict = {}
-        for i, element_id in enumerate(cellArea.path):
-            area_dict[dimNames[i]] = elNames[i][element_id]
-        cellType = cellArea.type
-        if (cellType == CellType.Numeric):
-            value = float(cellArea.value)
-        else:
-            value = cellArea.value
-        area_dict["Value"] = value
-        data_dict.append(area_dict)
+    list_areas = [[elNames[i][element_id] for i, element_id in enumerate(cellArea.path)] + [cellArea.value] 
+                  for cellArea in cellAreas ]
 
-    df = pd.DataFrame(data_dict) 
+    df = pd.DataFrame(list_areas, columns= dimNames + ["Value"]) 
     
     if not silent:
         if verbose:
@@ -83,11 +113,18 @@ def CellExportPy (cube: Cube, area = None, use_rules=True, base_only=True, skip_
         print(f" Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек) ".center(outputWidth, fillSymbol)) 
     return df
 
-# Выгрузка данных из куба для списка областей
-def CellExportPy_areaList (cube: Cube, areas, use_rules=True, base_only=True, skip_empty=True, 
+def CellExportPy_areaList (cube: Cube, areas: List[Dict[str,List[str] | str]], use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False):
     """
+    Выгрузка данных из куба для списка областей. Для каждой области вызывается функция CellExportPy, а полученные dataframes объединяются в один. 
+
     :param areas: список словарей вида {dimName: elementName} или {dimName: [elementName1, elementName2,...]} для указания среза.
+    :param use_rules: грузить ячейки, к которым применяются правила
+    :param base_only: грузить только базовые элементы
+    :param skip_empty: пропускать пустые ячейки
+    :param show_rule: непонятно, что делает. Используйте use_rules
+    :param verbose: выводить ли информацию о размере и столбцах полученного dataframe
+    :param silent: отключить все выводы, включая информацию о размере и столбцах полученного dataframe. Параметр полезен при загрузке нескольких областей, чтобы не засорять лог повторяющейся информацией. 
     """
     cubeName = cube.CurrentInfo.name_cube
     if not silent:
@@ -113,8 +150,14 @@ def CellExportPy_areaList (cube: Cube, areas, use_rules=True, base_only=True, sk
         print(f"Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек)".center(outputWidth, fillSymbol))
     return df
 
-# Выгрузка dataframe в куб
 def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
+    """
+    Загрузка данных из dataframe в куб. Dataframe должен содержать столбец Value со значениями и столбцы с именами измерений, совпадающими с именами измерений в кубе.
+
+    :param df: dataframe для загрузки. Должен содержать столбец Value со значениями и столбцы с именами измерений, совпадающими с именами измерений в кубе.
+    :param cube: куб для загрузки данных
+    :param add: флаг, указывающий, нужно ли добавлять значения к существующим в кубе (True) или перезаписывать их (False).
+    """
     cubeName = cube.CurrentInfo.name_cube
 
     if df.empty:
@@ -130,18 +173,38 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
     cube_values = df['Value'].tolist()
 
     # формируем список координат
-    coordinates = df[[dim.Info().ndimension for dim in cube.CubeDimensions()]].values.tolist()
+    cube_dims = cube.CubeDimensions()
+    dimNames = [dim.Info().ndimension for dim in cube_dims]
+    
+    # Преобразуем текстовые названия элементы в их id
+    elIds = {dim.Info().ndimension : {el.element_name: el.element for el in dim.ElementInfos()} for dim in cube_dims}
+    for dimName in dimNames:
+        df[dimName] = df[dimName].map(elIds[dimName])
+
+    coordinates = df[dimNames].values.tolist()
 
     # загрузка в куб-приемник
     print(f" Начало загрузки в куб '{cubeName}' ({len(df)} ячеек) ".center(outputWidth, fillSymbol))
     
-    cube.SetValuesBulk(values=cube_values, coords=coordinates, add=add)
+    # Загрузка кусочками
+    nRows = len(cube_values)
+    chunk_size = 100_000
+    chunk_start = 1
+    while chunk_start < nRows:
+        chunk_end = min (chunk_start + chunk_size - 1, nRows)
+        cube.SetValuesBulk(cube_values[chunk_start-1:chunk_end], coordinates[chunk_start-1:chunk_end])
+        chunk_start += chunk_size
+
+    # cube.SetValuesBulk(values=cube_values, coords=coordinates, add=add)
     print(f" Загрузка в куб '{cubeName}' завершена ".center(outputWidth, fillSymbol))
 
-# Очистка среза
-def clearCubePy(cube: Cube, area = None, silent=False):
+def clearCubePy(cube: Cube, area: Dict[str,List[str] | str] = None, silent=False):
     """
+    Очистка среза куба. Если параметр area не задан, очищает весь куб. Если задан, очищает только указанный срез.
+
+    :param cube: куб для очистки
     :param area: словарь вида {dimName: elementName} или {dimName: [elementName1, elementName2,...]} для указания среза.
+    :param silent: флаг, указывающий, нужно ли выводить сообщения о ходе выполнения
     """
     cube_dims = cube.CubeDimensions()
     cubeName = cube.CurrentInfo.name_cube
@@ -166,10 +229,13 @@ def clearCubePy(cube: Cube, area = None, silent=False):
     if not silent:
         print(f" Срез куба '{cubeName}' очищен ".center(outputWidth, fillSymbol))
 
-# Очистка среза для списка областей
-def clearCubePy_areaList(cube: Cube, areas, silent=False):
+def clearCubePy_areaList(cube: Cube, areas: List[Dict[str,List[str] | str]], silent=False):
     """
+    Очистка среза куба для списка областей. Для каждой области вызывается функция clearCubePy.
+
     :param areas: список словарей вида {dimName: elementName} или {dimName: [elementName1, elementName2,...]} для указания среза.
+    :param cube: куб для очистки
+    :param silent: флаг, указывающий, нужно ли выводить сообщения о ходе выполнения
     """
     cubeName = cube.CurrentInfo.name_cube
     
@@ -180,8 +246,15 @@ def clearCubePy_areaList(cube: Cube, areas, silent=False):
     if not silent:
         print(f"Срез куба '{cubeName}' очищен".center(outputWidth, fillSymbol))
 
-# Очистка dataframe от строк, где есть несуществующие элементы измерения
+
 def removeRowsWithNonexistElem(df, dimName: str, database: Database):
+    """
+    Очистка dataframe от строк, где есть несуществующие элементы измерения.
+
+    :param df: dataframe для очистки
+    :param dimName: имя измерения
+    :param database: база данных
+    """
     df = df.copy()
     # Убираем лишние пробелы с краёв
     df[dimName] = df[dimName].apply(lambda x: x.strip() if isinstance(x, str) else str(x))
@@ -207,8 +280,14 @@ def removeRowsWithNonexistElem(df, dimName: str, database: Database):
     
     return df[boolArrayElExists]
 
-# Переводи показателей в столбцы
 def pivotDataframe(df: pd.DataFrame, dimNameMeasure: str) -> pd.DataFrame:
+    """
+    Переводит показатели в столбцы.
+
+    :param df: dataframe для перевода
+    :param dimNameMeasure: имя измерения показателей
+    :return: dataframe с показателями в столбцах. Столбцы с именами измерений, кроме dimNameMeasure, сохраняются. Столбец Value с показателями удаляется, а показатели становятся значениями в новых столбцах.
+    """
     valueName = "Value"
     index_columns = [col for col in df.columns if col != dimNameMeasure and col != valueName]
     df_pivoted = df.pivot(index=index_columns,columns=dimNameMeasure, values = valueName)
@@ -219,6 +298,9 @@ def pivotDataframe(df: pd.DataFrame, dimNameMeasure: str) -> pd.DataFrame:
 
 # Вывод dataframe в логи
 def printDataframe(df: pd.DataFrame, max_rows=None, df_name=None):
+    """
+    Выводит в лог содержимое dataframe. Более читаемо, чем просто print(df). 
+    """
     print(f"Cтолбцы dataframe{f"' {df_name}'" if df_name else ''}: {df.columns.tolist()}")
     for i, row in enumerate(df.values):
         if max_rows and i > max_rows: break
