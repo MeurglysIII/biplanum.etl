@@ -39,6 +39,7 @@ import numpy as np
 
 outputWidth = 120
 fillSymbol = '#'
+valueName = 'Value'
 
 class LogWrite:
     """
@@ -53,7 +54,25 @@ class LogWrite:
             for line in string.split('\n'):
                 self.LOG.Info(line)
 
-def CellExportPy (cube: Cube, area: Dict[str,List[str] | str] = None, use_rules=True, base_only=True, skip_empty=True, 
+# Вывод dataframe в логи
+def printDataframe(df: pd.DataFrame, max_rows=6, df_name=None):
+    """
+    Выводит в лог содержимое dataframe. Более читаемо, чем просто print(df). 
+    """
+    nrows = len(df)
+    print(f"Cтолбцы dataframe{f"' {df_name}'" if df_name else ''}: {df.columns.tolist()}")
+    if nrows <= max_rows or max_rows == 1: # Если все строки умещаются в max_rows
+        for i, row in enumerate(df.values):
+            print(f"'{df.iloc[i].name}': {str(row.tolist())}")
+    else: # Если всего строк больше, чем max_rows
+        # Выводим первые и последние строки
+        for i in range(max_rows//2):
+            print(f"'{df.iloc[i].name}': {str(df.iloc[i].tolist())}")
+        print('.'*10)
+        for i in range(nrows - max_rows + max_rows//2, nrows):
+            print(f"'{df.iloc[i].name}': {str(df.iloc[i].tolist())}")
+
+def CellExportPy (cube: Cube, area: Dict[str,List[str] | str]|None = None, use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False) -> pd.DataFrame:
     """
     Загрузка данных из куба с помощью метода CellExport. Позволяет выгрузить срез куба в виде dataframe с измерениями в столбцах и значениями в столбце Value.
@@ -99,10 +118,11 @@ def CellExportPy (cube: Cube, area: Dict[str,List[str] | str] = None, use_rules=
     dimNames = [dim.Info().ndimension for dim in cube_dims]
     elNames = [{el.element: el.element_name for el in dim.ElementInfos()} for dim in cube_dims]
     data_dict = []
-    list_areas = [[elNames[i][element_id] for i, element_id in enumerate(cellArea.path)] + [cellArea.value] 
+    list_areas = [[elNames[i][element_id] for i, element_id in enumerate(cellArea.path)] 
+                  + [float(cellArea.value) if cellArea.type == CellType.Numeric else cellArea.value] 
                   for cellArea in cellAreas ]
 
-    df = pd.DataFrame(list_areas, columns= dimNames + ["Value"]) 
+    df = pd.DataFrame(list_areas, columns= dimNames + [valueName]) 
     
     if not silent:
         if verbose:
@@ -166,18 +186,50 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
 
     df = df.copy() # Копия, чтобы не менять оригинал
     # Заменяем символы, которые вызывают ошибки при записи
-    df["Value"] = df["Value"].apply(lambda x: x.replace(':','։') if isinstance(x, str) else x)
-    df["Value"] = df["Value"].apply(lambda x: x.replace('"',"'") if isinstance(x, str) else x)
+    df[valueName] = df[valueName].apply(lambda x: x.replace(':','։') if isinstance(x, str) else x)
+    df[valueName] = df[valueName].apply(lambda x: x.replace('"',"'") if isinstance(x, str) else x)
+
+    # Консолидируем, если нужно
+    if add:
+        df = df.groupby([col for col in df.columns if col != 'Value']).sum().reset_index()
 
     # формируем список со значениями 
-    cube_values = df['Value'].tolist()
+    cube_values = df[valueName].tolist()
 
     # формируем список координат
     cube_dims = cube.CubeDimensions()
     dimNames = [dim.Info().ndimension for dim in cube_dims]
-    
-    # Преобразуем текстовые названия элементы в их id
     elIds = {dim.Info().ndimension : {el.element_name: el.element for el in dim.ElementInfos()} for dim in cube_dims}
+    # Добавляем алиасы к мэппингу элемент-координата
+    for dim in cube_dims:
+        dimName = dim.Info().ndimension
+
+        aliasNames = [el.element_name for el in dim.AttributeDimension().ElementInfos()]
+        aliasNames = [a for a in aliasNames if a[0] == "@"] # алиасы начинаются с @
+
+        if aliasNames:
+            # Грузим алиасы из куба атрибутов
+            df_attr = CellExportPy (dim.AttributeCube(), {
+                dim.AttributeDimension().CurrentInfo.ndimension:aliasNames}, 
+                silent=True)
+
+            elIds_for_alias = dict(zip(df_attr[valueName], df_attr[dimName].map(elIds[dimName])))
+
+            elIds[dimName].update(elIds_for_alias)
+
+    # Проверяем существование элементов измерений
+    for dim in cube_dims:
+        dimName = dim.Info().ndimension
+        elNames = set(elIds[dimName].keys())
+        df_isin = df[dimName].isin(elNames)
+        if not df_isin.all(): # Если есть несуществующие элементы
+            df_first_line = df[~df_isin].head(1)
+            element_nonexist = df_first_line[dimName].to_list()[0]
+            print(f'Найден несуществующий элемент "{element_nonexist}" измерения "{dimName}" в следующей строчке:')
+            printDataframe(df_first_line)
+            raise ValueError(f'Найден несуществующий элемент "{element_nonexist}" измерения "{dimName}"')
+
+    # Преобразуем текстовые названия элементов в их id
     for dimName in dimNames:
         df[dimName] = df[dimName].map(elIds[dimName])
 
@@ -190,7 +242,7 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
     nRows = len(cube_values)
     chunk_size = 100_000
     chunk_start = 1
-    while chunk_start < nRows:
+    while chunk_start <= nRows:
         chunk_end = min (chunk_start + chunk_size - 1, nRows)
         cube.SetValuesBulk(cube_values[chunk_start-1:chunk_end], coordinates[chunk_start-1:chunk_end])
         chunk_start += chunk_size
@@ -198,7 +250,7 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
     # cube.SetValuesBulk(values=cube_values, coords=coordinates, add=add)
     print(f" Загрузка в куб '{cubeName}' завершена ".center(outputWidth, fillSymbol))
 
-def clearCubePy(cube: Cube, area: Dict[str,List[str] | str] = None, silent=False):
+def clearCubePy(cube: Cube, area: Dict[str,List[str] | str] | None = None, silent=False):
     """
     Очистка среза куба. Если параметр area не задан, очищает весь куб. Если задан, очищает только указанный срез.
 
@@ -269,7 +321,7 @@ def removeRowsWithNonexistElem(df, dimName: str, database: Database):
     df_attr = CellExportPy (dimension.AttributeCube(), verbose=False)
     # Добавляем алиасы в общий список элементов
     for alias in aliasNames:
-        elNames += df_attr[df_attr.iloc[:, 0] == alias]["Value"].tolist()
+        elNames += df_attr[df_attr.iloc[:, 0] == alias][valueName].tolist()
     # Проверям, есть ли элемент в измерении
     boolArrayElExists = df[dimName].isin(elNames)
     foundNonexistElements = (~boolArrayElExists).values.any()
@@ -288,20 +340,9 @@ def pivotDataframe(df: pd.DataFrame, dimNameMeasure: str) -> pd.DataFrame:
     :param dimNameMeasure: имя измерения показателей
     :return: dataframe с показателями в столбцах. Столбцы с именами измерений, кроме dimNameMeasure, сохраняются. Столбец Value с показателями удаляется, а показатели становятся значениями в новых столбцах.
     """
-    valueName = "Value"
     index_columns = [col for col in df.columns if col != dimNameMeasure and col != valueName]
     df_pivoted = df.pivot(index=index_columns,columns=dimNameMeasure, values = valueName)
     df_pivoted.replace({np.nan: None}, inplace=True)
     df_pivoted.reset_index(inplace=True) # Возвращаем остальные колонки из индекса
     
     return df_pivoted
-
-# Вывод dataframe в логи
-def printDataframe(df: pd.DataFrame, max_rows=None, df_name=None):
-    """
-    Выводит в лог содержимое dataframe. Более читаемо, чем просто print(df). 
-    """
-    print(f"Cтолбцы dataframe{f"' {df_name}'" if df_name else ''}: {df.columns.tolist()}")
-    for i, row in enumerate(df.values):
-        if max_rows and i > max_rows: break
-        print(f"'{df.iloc[i].name}': {str(row.tolist())}")
