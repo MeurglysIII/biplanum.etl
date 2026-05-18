@@ -55,7 +55,7 @@ class LogWrite:
                 self.LOG.Info(line)
 
 # Вывод dataframe в логи
-def printDataframe(df: pd.DataFrame, max_rows=6, df_name=None):
+def printDataframe(df:pd.DataFrame, max_rows=6, df_name:str=None):
     """
     Выводит в лог содержимое dataframe. Более читаемо, чем просто print(df). 
     """
@@ -72,7 +72,7 @@ def printDataframe(df: pd.DataFrame, max_rows=6, df_name=None):
         for i in range(nrows - max_rows + max_rows//2, nrows):
             print(f"'{df.iloc[i].name}': {str(df.iloc[i].tolist())}")
 
-def CellExportPy (cube: Cube, area: Dict[str,List[str] | str]|None = None, use_rules=True, base_only=True, skip_empty=True, 
+def CellExportPy (cube:Cube, area:Dict[str,List[str] | str]|None = None, use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False) -> pd.DataFrame:
     """
     Загрузка данных из куба с помощью метода CellExport. Позволяет выгрузить срез куба в виде dataframe с измерениями в столбцах и значениями в столбце Value.
@@ -99,9 +99,22 @@ def CellExportPy (cube: Cube, area: Dict[str,List[str] | str]|None = None, use_r
             dimName = dim.Info().ndimension
             if dimName in area:
                 if isinstance(area[dimName], str): # если только один элемент в области
-                    area_int.append([dim.Element(elementName=area[dimName]).Info().element])
-                else:                    # если несколько элементов в области
-                    area_int.append([dim.Element(elementName=element_str).Info().element for element_str in area[dimName]])
+                    try: # На случай, если элемента нет в измерении
+                        el_id = dim.Element(elementName=area[dimName]).Info().element
+                    except Exception as e:
+                        print(f'Элемент {element_str} не найден в измернии {dimName}')
+                        raise e
+                    area_int.append([el_id])
+                else: # если несколько элементов в области
+                    this_area = []
+                    for element_str in area[dimName]:
+                        try: # На случай, если элемента нет в измерении
+                            el_id = dim.Element(elementName=element_str).Info().element
+                        except Exception as e:
+                            print(f'Элемент {element_str} не найден в измернии {dimName}')
+                            raise e
+                        this_area.append(el_id)
+                    area_int.append(this_area)
             elif base_only: # Если срез не задан и есть флаг на базовые элементы
                 area_int.append([el.element for el in dim.ElementInfos() if el.level == 0])
             else: # Если срез не задан
@@ -117,7 +130,6 @@ def CellExportPy (cube: Cube, area: Dict[str,List[str] | str]|None = None, use_r
     # Преобразование в dataframe (сначала в словари)
     dimNames = [dim.Info().ndimension for dim in cube_dims]
     elNames = [{el.element: el.element_name for el in dim.ElementInfos()} for dim in cube_dims]
-    data_dict = []
     list_areas = [[elNames[i][element_id] for i, element_id in enumerate(cellArea.path)] 
                   + [float(cellArea.value) if cellArea.type == CellType.Numeric else cellArea.value] 
                   for cellArea in cellAreas ]
@@ -133,7 +145,7 @@ def CellExportPy (cube: Cube, area: Dict[str,List[str] | str]|None = None, use_r
         print(f" Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек) ".center(outputWidth, fillSymbol)) 
     return df
 
-def CellExportPy_areaList (cube: Cube, areas: List[Dict[str,List[str] | str]], use_rules=True, base_only=True, skip_empty=True, 
+def CellExportPy_areaList (cube:Cube, areas:List[Dict[str,List[str] | str]], use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False):
     """
     Выгрузка данных из куба для списка областей. Для каждой области вызывается функция CellExportPy, а полученные dataframes объединяются в один. 
@@ -170,7 +182,7 @@ def CellExportPy_areaList (cube: Cube, areas: List[Dict[str,List[str] | str]], u
         print(f"Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек)".center(outputWidth, fillSymbol))
     return df
 
-def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
+def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False):
     """
     Загрузка данных из dataframe в куб. Dataframe должен содержать столбец Value со значениями и столбцы с именами измерений, совпадающими с именами измерений в кубе.
 
@@ -189,6 +201,11 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
     df[valueName] = df[valueName].apply(lambda x: x.replace(':','։') if isinstance(x, str) else x)
     df[valueName] = df[valueName].apply(lambda x: x.replace('"',"'") if isinstance(x, str) else x)
 
+    # Оставляем только измерения куба и Value в столбцах
+    cube_dims = cube.CubeDimensions()
+    dimNames = [dim.Info().ndimension for dim in cube_dims]
+    df = df[dimNames+[valueName]]
+
     # Консолидируем, если нужно
     if add:
         df = df.groupby([col for col in df.columns if col != 'Value']).sum().reset_index()
@@ -197,8 +214,7 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
     cube_values = df[valueName].tolist()
 
     # формируем список координат
-    cube_dims = cube.CubeDimensions()
-    dimNames = [dim.Info().ndimension for dim in cube_dims]
+
     elIds = {dim.Info().ndimension : {el.element_name: el.element for el in dim.ElementInfos()} for dim in cube_dims}
     # Добавляем алиасы к мэппингу элемент-координата
     for dim in cube_dims:
@@ -250,7 +266,7 @@ def loadDataframeInCube(df: pd.DataFrame, cube: Cube, add:bool=False):
     # cube.SetValuesBulk(values=cube_values, coords=coordinates, add=add)
     print(f" Загрузка в куб '{cubeName}' завершена ".center(outputWidth, fillSymbol))
 
-def clearCubePy(cube: Cube, area: Dict[str,List[str] | str] | None = None, silent=False):
+def clearCubePy(cube:Cube, area:Dict[str,List[str] | str] | None = None, silent=False):
     """
     Очистка среза куба. Если параметр area не задан, очищает весь куб. Если задан, очищает только указанный срез.
 
@@ -281,7 +297,7 @@ def clearCubePy(cube: Cube, area: Dict[str,List[str] | str] | None = None, silen
     if not silent:
         print(f" Срез куба '{cubeName}' очищен ".center(outputWidth, fillSymbol))
 
-def clearCubePy_areaList(cube: Cube, areas: List[Dict[str,List[str] | str]], silent=False):
+def clearCubePy_areaList(cube:Cube, areas:List[Dict[str,List[str] | str]], silent=False):
     """
     Очистка среза куба для списка областей. Для каждой области вызывается функция clearCubePy.
 
@@ -299,7 +315,7 @@ def clearCubePy_areaList(cube: Cube, areas: List[Dict[str,List[str] | str]], sil
         print(f"Срез куба '{cubeName}' очищен".center(outputWidth, fillSymbol))
 
 
-def removeRowsWithNonexistElem(df, dimName: str, database: Database):
+def removeRowsWithNonexistElem(df:pd.DataFrame, dimName: str, database: Database):
     """
     Очистка dataframe от строк, где есть несуществующие элементы измерения.
 
@@ -332,7 +348,7 @@ def removeRowsWithNonexistElem(df, dimName: str, database: Database):
     
     return df[boolArrayElExists]
 
-def pivotDataframe(df: pd.DataFrame, dimNameMeasure: str) -> pd.DataFrame:
+def pivotDataframe(df:pd.DataFrame, dimNameMeasure: str) -> pd.DataFrame:
     """
     Переводит показатели в столбцы.
 
