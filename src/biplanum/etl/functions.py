@@ -13,6 +13,7 @@ ETL утилиты для работы с кубами Planum OLAP и DataFrame 
     LogWrite: Перенаправляет вывод print в логгер Planum.
 
 Функции:
+    createConnection: Создание соединения с моделью Планума
     CellExportPy: Экспорт данных куба в виде DataFrame.
     CellExportPy_areaList: Экспорт данных из нескольких областей куба.
     loadDataframeInCube: Загрузка значений DataFrame в куб.
@@ -35,6 +36,7 @@ import pandas as pd
 from typing import List, Dict
 from Planum.DAL import Database, Cube
 from Planum.DAL.Model import CellType
+from Planum.Process.Connections import PlanumConnection
 import numpy as np
 
 outputWidth = 120
@@ -53,6 +55,33 @@ class LogWrite:
         if string != '\n':
             for line in string.split('\n'):
                 self.LOG.Info(line)
+
+class CubePy(Cube):
+    name:str
+    cubeObj:Cube
+    dimNameMeasure:str
+
+    def __init__(self, cubeName:str, database:Database):
+        super().__init__(database, cubeName=cubeName) 
+        self.name = cubeName
+        self.dimNameMeasure = self.CubeDimensions()[-1].Info().ndimension
+
+def createConnection(Host:str, Port:str, Database:str, User:str, Password:str, 
+    UseSsl:bool = False)->PlanumConnection:
+    """Создаёт соединение с моделью"""
+    # Создаём пустое соединение
+    obj = PlanumConnection() 
+    
+    # Для каждого параметра вызываем метод setter
+    for key, value in locals().items():
+        setter_name = f"set_{key}"
+        if hasattr(obj, setter_name): # Если есть метод setter
+            getattr(obj, setter_name)(value)
+        # Если у класса есть параметр в конструкторе
+        elif hasattr(obj, key):
+            setattr(obj, key, value)
+            
+    return obj
 
 # Вывод dataframe в логи
 def printDataframe(df:pd.DataFrame, max_rows=6, df_name:str=None):
@@ -204,6 +233,12 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False):
     # Оставляем только измерения куба и Value в столбцах
     cube_dims = cube.CubeDimensions()
     dimNames = [dim.Info().ndimension for dim in cube_dims]
+    columns_to_keep = dimNames+[valueName]
+    all_columns = list(df.columns)
+    # Проверяем, что все измерения есть среди столбцов
+    for column in columns_to_keep:
+        if not column in all_columns:
+            raise ValueError(f'Не найдено измерение "{column}" среди столбцов dataframe куба "{cubeName}"')
     df = df[dimNames+[valueName]]
 
     # Консолидируем, если нужно
@@ -265,6 +300,7 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False):
 
     # cube.SetValuesBulk(values=cube_values, coords=coordinates, add=add)
     print(f" Загрузка в куб '{cubeName}' завершена ".center(outputWidth, fillSymbol))
+
 
 def clearCubePy(cube:Cube, area:Dict[str,List[str] | str] | None = None, silent=False):
     """
