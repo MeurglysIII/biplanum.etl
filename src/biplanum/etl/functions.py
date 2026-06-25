@@ -35,8 +35,9 @@ ETL утилиты для работы с кубами Planum OLAP и DataFrame 
 import pandas as pd
 from typing import List, Dict
 from Planum.DAL import Database, Cube
-from Planum.DAL.Model import CellType
+from Planum.DAL.Model import CellType, CellArea
 from Planum.Process.Connections import PlanumConnection
+from collections.abc import Generator, Iterable
 import numpy as np
 
 outputWidth = 120
@@ -54,7 +55,7 @@ class LogWrite:
     def write(self, string):
         if string != '\n':
             for line in string.split('\n'):
-                self.LOG.Info(line)
+                if line: self.LOG.Info(line)
 
 class CubePy(Cube):
     name:str
@@ -102,7 +103,7 @@ def printDataframe(df:pd.DataFrame, max_rows=6, df_name:str=None):
             print(f"'{df.iloc[i].name}': {str(df.iloc[i].tolist())}")
 
 def CellExportPy (cube:Cube, area:Dict[str,List[str] | str]|None = None, use_rules=True, base_only=True, skip_empty=True, 
-                  show_rule=True, verbose=True, silent=False) -> pd.DataFrame:
+                  show_rule=True, verbose=True, silent=False, blocksize:int|None = None) -> pd.DataFrame|Generator[pd.DataFrame, None, None]:
     """
     Загрузка данных из куба с помощью метода CellExport. Позволяет выгрузить срез куба в виде dataframe с измерениями в столбцах и значениями в столбце Value.
 
@@ -113,6 +114,7 @@ def CellExportPy (cube:Cube, area:Dict[str,List[str] | str]|None = None, use_rul
     :param show_rule: непонятно, что делает. Используйте use_rules
     :param verbose: выводить ли информацию о размере и столбцах полученного dataframe
     :param silent: отключить все выводы, включая информацию о размере и столбцах полученного dataframe. Параметр полезен при загрузке нескольких областей, чтобы не засорять лог повторяющейся информацией. 
+    :param blocksize: размер блока. Если указан, то функция возвращает генератор, который отдёт Dataframe по блокам указанного размера
     """
 
     cubeName = cube.CurrentInfo.name_cube
@@ -153,26 +155,68 @@ def CellExportPy (cube:Cube, area:Dict[str,List[str] | str]|None = None, use_rul
     #Извлечение среза
     if not silent:
         print(f" Начало загрузки данных из куба {cubeName} ".center(outputWidth, fillSymbol))
-    cellAreas = cube.CellExport(area=area_int, use_rules=use_rules, base_only=base_only, skip_empty=skip_empty, 
-                                show_rule=show_rule, blocksize=1_000_000_000)
-
-    # Преобразование в dataframe (сначала в словари)
-    dimNames = [dim.Info().ndimension for dim in cube_dims]
-    elNames = [{el.element: el.element_name for el in dim.ElementInfos()} for dim in cube_dims]
-    list_areas = [[elNames[i][element_id] for i, element_id in enumerate(cellArea.path)] 
-                  + [float(cellArea.value) if cellArea.type == CellType.Numeric else cellArea.value] 
-                  for cellArea in cellAreas ]
-
-    df = pd.DataFrame(list_areas, columns= dimNames + [valueName]) 
     
-    if not silent:
-        if verbose:
-            print(f"Размерность полученного df: {df.shape}")
-            print(f"Полученные столбцы: {df.columns.tolist()}")
-            print(f"Первая строка: {str(df.head(1).values.tolist())}")
-            print(f"Последняя строка: {str(df.tail(1).values.tolist())}")
-        print(f" Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек) ".center(outputWidth, fillSymbol)) 
-    return df
+    def cellAreasToDataframe(cellAreas:Iterable[CellArea])->pd.DataFrame:
+        # Преобразование в dataframe (сначала в словари)
+        dimNames = [dim.Info().ndimension for dim in cube_dims]
+        elNames = [{el.element: el.element_name for el in dim.ElementInfos()} for dim in cube_dims]
+        list_areas = [[elNames[i][element_id] for i, element_id in enumerate(cellArea.path)] 
+                    + [float(cellArea.value) if cellArea.type == CellType.Numeric else cellArea.value] 
+                    for cellArea in cellAreas ]
+
+        return pd.DataFrame(list_areas, columns= dimNames + [valueName]) 
+
+    if blocksize:
+        def generator_df()->Generator[pd.DataFrame, None, None]:
+            """
+            Генератор Dataframe по блокам
+            """
+            lastPath = None # Хранит последний путь, с которого будет грузиться следующий блок
+            counter = 0 # Номер блока
+            while(True):
+                cellAreas = cube.CellExport(area=area_int, use_rules=use_rules, base_only=base_only, skip_empty=skip_empty, 
+                                            show_rule=show_rule, blocksize=blocksize, path=lastPath)
+                len_areas = len(list(cellAreas))
+                if not len_areas: #Если пустой блок
+                    break
+
+                lastPath = list(cellAreas)[-1].path # Последний путь, с которого будет грузиться следующий блок
+
+                df = cellAreasToDataframe(cellAreas)
+
+                isLastBlock = len_areas < blocksize
+
+                if not silent:
+                    if verbose:
+                        print(f"Размерность полученного df: {df.shape}")
+                        print(f"Полученные столбцы: {df.columns.tolist()}")
+                        print(f"Первая строка: {str(df.head(1).values.tolist())}")
+                        print(f"Последняя строка: {str(df.tail(1).values.tolist())}")
+                    print(f" Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек, блок №{counter})".center(outputWidth, fillSymbol)) 
+                    print(f" Все блоки данных из куба '{cubeName}' успешно загружены ({blocksize*counter + len_areas} ячеек, {counter+1} блоков)".center(outputWidth, fillSymbol)) 
+
+                yield df
+
+                if isLastBlock:
+                    break
+                counter += 1
+        
+        return generator_df()
+    else: # Загрузка одним блоком
+        cellAreas = cube.CellExport(area=area_int, use_rules=use_rules, base_only=base_only, skip_empty=skip_empty, 
+                                    show_rule=show_rule, blocksize=1_000_000_000, path=None)
+
+        df = cellAreasToDataframe(cellAreas)
+        
+        if not silent:
+            if verbose:
+                print(f"Размерность полученного df: {df.shape}")
+                print(f"Полученные столбцы: {df.columns.tolist()}")
+                print(f"Первая строка: {str(df.head(1).values.tolist())}")
+                print(f"Последняя строка: {str(df.tail(1).values.tolist())}")
+            print(f" Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек) ".center(outputWidth, fillSymbol)) 
+
+        return df
 
 def CellExportPy_areaList (cube:Cube, areas:List[Dict[str,List[str] | str]], use_rules=True, base_only=True, skip_empty=True, 
                   show_rule=True, verbose=True, silent=False):

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "biplanum.etl"
-version = "1.0.4"
+version = "1.0.5"
 authors = [
   { name="Daniil Kirichenko", email="dkirichenko@biplanum.ru" },
 ]
