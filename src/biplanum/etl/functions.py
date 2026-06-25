@@ -270,9 +270,9 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False):
         return
 
     df = df.copy() # Копия, чтобы не менять оригинал
-    # Заменяем символы, которые вызывают ошибки при записи
-    df[valueName] = df[valueName].apply(lambda x: x.replace(':','։') if isinstance(x, str) else x)
-    df[valueName] = df[valueName].apply(lambda x: x.replace('"',"'") if isinstance(x, str) else x)
+    # Заменяем символы, которые вызывают ошибки при записи (на новых версиях Планума это не нужно)
+    #df[valueName] = df[valueName].apply(lambda x: x.replace(':','։') if isinstance(x, str) else x)
+    #df[valueName] = df[valueName].apply(lambda x: x.replace('"',"'") if isinstance(x, str) else x)
 
     # Оставляем только измерения куба и Value в столбцах
     cube_dims = cube.CubeDimensions()
