@@ -255,13 +255,14 @@ def CellExportPy_areaList (cube:Cube, areas:List[Dict[str,List[str] | str]], use
         print(f"Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек)".center(outputWidth, fillSymbol))
     return df
 
-def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False):
+def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False, chunkSize:int = 100_000):
     """
     Загрузка данных из dataframe в куб. Dataframe должен содержать столбец Value со значениями и столбцы с именами измерений, совпадающими с именами измерений в кубе.
 
     :param df: dataframe для загрузки. Должен содержать столбец Value со значениями и столбцы с именами измерений, совпадающими с именами измерений в кубе.
     :param cube: куб для загрузки данных
     :param add: флаг, указывающий, нужно ли добавлять значения к существующим в кубе (True) или перезаписывать их (False).
+    :param chunkSize: размер блока при загрузке в куб блоками
     """
     cubeName = cube.CurrentInfo.name_cube
 
@@ -335,12 +336,11 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False):
     
     # Загрузка кусочками
     nRows = len(cube_values)
-    chunk_size = 100_000
     chunk_start = 1
     while chunk_start <= nRows:
-        chunk_end = min (chunk_start + chunk_size - 1, nRows)
+        chunk_end = min (chunk_start + chunkSize - 1, nRows)
         cube.SetValuesBulk(cube_values[chunk_start-1:chunk_end], coordinates[chunk_start-1:chunk_end])
-        chunk_start += chunk_size
+        chunk_start += chunkSize
 
     # cube.SetValuesBulk(values=cube_values, coords=coordinates, add=add)
     print(f" Загрузка в куб '{cubeName}' завершена ".center(outputWidth, fillSymbol))
