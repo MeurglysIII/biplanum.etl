@@ -103,7 +103,7 @@ def printDataframe(df:pd.DataFrame, max_rows=6, df_name:str=None):
             print(f"'{df.iloc[i].name}': {str(df.iloc[i].tolist())}")
 
 def CellExportPy (cube:Cube, area:Dict[str,List[str] | str]|None = None, use_rules=True, base_only=True, skip_empty=True, 
-                  show_rule=True, verbose=True, silent=False, blocksize:int|None = None) -> pd.DataFrame|Generator[pd.DataFrame, None, None]:
+                  show_rule=True, verbose=True, silent=False, blocksize:int|None = None):
     """
     Загрузка данных из куба с помощью метода CellExport. Позволяет выгрузить срез куба в виде dataframe с измерениями в столбцах и значениями в столбце Value.
 
@@ -115,6 +115,8 @@ def CellExportPy (cube:Cube, area:Dict[str,List[str] | str]|None = None, use_rul
     :param verbose: выводить ли информацию о размере и столбцах полученного dataframe
     :param silent: отключить все выводы, включая информацию о размере и столбцах полученного dataframe. Параметр полезен при загрузке нескольких областей, чтобы не засорять лог повторяющейся информацией. 
     :param blocksize: размер блока. Если указан, то функция возвращает генератор, который отдёт Dataframe по блокам указанного размера
+    :returns: Dataframe или генератор Dataframe, если указан blocksize
+    :rtype: pandas.Dataframe или Generator[pandas.Dataframe]
     """
 
     cubeName = cube.CurrentInfo.name_cube
@@ -255,7 +257,7 @@ def CellExportPy_areaList (cube:Cube, areas:List[Dict[str,List[str] | str]], use
         print(f"Данные из куба '{cubeName}' успешно загружены ({len(df)} ячеек)".center(outputWidth, fillSymbol))
     return df
 
-def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False, chunkSize:int = 100_000):
+def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False, chunkSize:int = 100_000, skipRowsWithErrors:bool = False):
     """
     Загрузка данных из dataframe в куб. Dataframe должен содержать столбец Value со значениями и столбцы с именами измерений, совпадающими с именами измерений в кубе.
 
@@ -263,6 +265,7 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False, chunkSize:in
     :param cube: куб для загрузки данных
     :param add: флаг, указывающий, нужно ли добавлять значения к существующим в кубе (True) или перезаписывать их (False).
     :param chunkSize: размер блока при загрузке в куб блоками
+    :param skipRowsWithErrors: флаг, указывающий, нужно ли пропускать строки с ошибками (True) или вообще не производить загрузку если есть ошибки (False).
     """
     cubeName = cube.CurrentInfo.name_cube
 
@@ -290,15 +293,12 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False, chunkSize:in
     if add:
         df = df.groupby([col for col in df.columns if col != 'Value']).sum().reset_index()
 
-    # формируем список со значениями 
-    cube_values = df[valueName].tolist()
-
-    # формируем список координат
-
-    elIds = {dim.Info().ndimension : {el.element_name: el.element for el in dim.ElementInfos()} for dim in cube_dims}
+    # Получаем словарь с элементами измерений и их id
+    elInfos = {dimNames[i] : dim.ElementInfos() for i, dim in enumerate(cube_dims)}
+    elIds = {dimName : {el.element_name: el.element for el in elInfos} for dimName, elInfos in elInfos.items()}
     # Добавляем алиасы к мэппингу элемент-координата
-    for dim in cube_dims:
-        dimName = dim.Info().ndimension
+    for i, dim in enumerate(cube_dims):
+        dimName = dimNames[i]
 
         aliasNames = [el.element_name for el in dim.AttributeDimension().ElementInfos()]
         aliasNames = [a for a in aliasNames if a[0] == "@"] # алиасы начинаются с @
@@ -310,12 +310,11 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False, chunkSize:in
                 silent=True)
 
             elIds_for_alias = dict(zip(df_attr[valueName], df_attr[dimName].map(elIds[dimName])))
-
             elIds[dimName].update(elIds_for_alias)
 
     # Проверяем существование элементов измерений
-    for dim in cube_dims:
-        dimName = dim.Info().ndimension
+    for i, dim in enumerate(cube_dims):
+        dimName = dimNames[i]
         elNames = set(elIds[dimName].keys())
         df_isin = df[dimName].isin(elNames)
         if not df_isin.all(): # Если есть несуществующие элементы
@@ -323,12 +322,44 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False, chunkSize:in
             element_nonexist = df_first_line[dimName].to_list()[0]
             print(f'Найден несуществующий элемент "{element_nonexist}" измерения "{dimName}" в следующей строчке:')
             printDataframe(df_first_line)
-            raise ValueError(f'Найден несуществующий элемент "{element_nonexist}" измерения "{dimName}"')
+            if skipRowsWithErrors:
+                # Если игнорируем ошибки, то удаляем строки с несуществующими элементами
+                df = df[df_isin]
+            else:
+                raise ValueError(f'Найден несуществующий элемент "{element_nonexist}" измерения "{dimName}"')
 
     # Преобразуем текстовые названия элементов в их id
     for dimName in dimNames:
         df[dimName] = df[dimName].map(elIds[dimName])
 
+    # Определяем, какие ячейки - числовые, чтобы проверить, что данные к записи поданы корректные
+    df_numeric = df
+    for i, dim in enumerate(cube_dims):
+        dimName = dimNames[i]
+        elIdsNumeric = [elInfo.element for elInfo in elInfos[dimName] if elInfo.type==ElementType.Numeric]
+        df_numeric = df_numeric[df_numeric[dimName].isin(elIdsNumeric)]
+    # Конвертируем числовые ячейки в числа, чтобы найти те, где конверсия выдаёт ошибку
+    maskConversErr = pd.to_numeric(df_numeric[valueName], errors='coerce').isna()
+
+    if maskConversErr.any(): # Если есть ошибки конверсии
+        LOG.Warn(f'Часть чисел имеют некорректный формат')
+        numErrRowsToShow = 5
+        dfConversErr = df_numeric[maskConversErr].head(numErrRowsToShow).copy() # df со строчками, где были ошибки
+        # Преобразуем id элементов к их названиям
+        for i, dim in enumerate(cube_dims):
+            dimName = dimNames[i]
+            elNamesDict = {elInfo.element:elInfo.element_name for elInfo in elInfos[dimName]}
+            dfConversErr[dimName] = dfConversErr[dimName].map(elNamesDict)
+        printDataframe(dfConversErr, df_name=f'Список первых {numErrRowsToShow} строк, где были ошибки в форматах чисел')
+        if skipRowsWithErrors:
+            # Если игнорируем ошибки, то удаляем строки с ошибками
+            df = df.drop(index=df_numeric[maskConversErr].index)
+        else:
+            raise ValueError(f'Ошибка в формате числа "{dfConversErr.at[dfConversErr.index[0], valueName]}"')
+
+    # формируем список со значениями 
+    cube_values = df[valueName].tolist()
+    # формируем список с координатами
     coordinates = df[dimNames].values.tolist()
 
     # загрузка в куб-приемник
@@ -344,7 +375,6 @@ def loadDataframeInCube(df:pd.DataFrame, cube:Cube, add:bool=False, chunkSize:in
 
     # cube.SetValuesBulk(values=cube_values, coords=coordinates, add=add)
     print(f" Загрузка в куб '{cubeName}' завершена ".center(outputWidth, fillSymbol))
-
 
 def clearCubePy(cube:Cube, area:Dict[str,List[str] | str] | None = None, silent=False):
     """
